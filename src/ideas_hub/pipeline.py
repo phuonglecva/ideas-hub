@@ -1,3 +1,4 @@
+import logging
 import math
 from datetime import datetime, timezone
 from uuid import UUID
@@ -13,14 +14,38 @@ from ideas_hub.models import Article, Event, EventArticle, Opportunity, Signal, 
 from ideas_hub.schemas import ArticleInsight, OpportunityScore, OpportunityThesis, SkepticReview
 from ideas_hub.storage import ObjectStore
 
+logger = logging.getLogger(__name__)
 
-def signal_score(velocity: float, persistence: float, breadth: float, authority: float, novelty: float, economic_relevance: float) -> float:
-    return round(100 * (0.20 * velocity + 0.15 * persistence + 0.15 * breadth + 0.15 * authority + 0.10 * novelty + 0.25 * economic_relevance), 2)
+
+def signal_score(
+    velocity: float,
+    persistence: float,
+    breadth: float,
+    authority: float,
+    novelty: float,
+    economic_relevance: float,
+) -> float:
+    return round(
+        100
+        * (
+            0.20 * velocity
+            + 0.15 * persistence
+            + 0.15 * breadth
+            + 0.15 * authority
+            + 0.10 * novelty
+            + 0.25 * economic_relevance
+        ),
+        2,
+    )
 
 
 async def ingest_url(db: AsyncSession, source: Source, url: str) -> Article | None:
     crawled = await fetch_article(url)
-    existing = await db.scalar(select(Article).where((Article.canonical_url == crawled.url) | (Article.content_hash == crawled.content_hash)))
+    existing = await db.scalar(
+        select(Article).where(
+            (Article.canonical_url == crawled.url) | (Article.content_hash == crawled.content_hash)
+        )
+    )
     if existing:
         return None
 
@@ -53,17 +78,29 @@ async def ingest_url(db: AsyncSession, source: Source, url: str) -> Article | No
             ArticleInsight,
         )
         article.extracted = insight.model_dump(mode="json")
-    except Exception:
+    except Exception as exc:
         # In local-first mode ingestion remains useful even if no LLM server is running.
-        article.extracted = {"entities": [], "industries": [], "affected_groups": [], "problems": [], "changes": [], "claims": [], "metrics": [], "regulations": []}
+        logger.warning("article extraction failed for %s: %s", article.id, exc)
+        article.extracted = {
+            "entities": [],
+            "industries": [],
+            "affected_groups": [],
+            "problems": [],
+            "changes": [],
+            "claims": [],
+            "metrics": [],
+            "regulations": [],
+        }
 
-    await attach_event(db, article, source)
+    await attach_event(db, article)
     return article
 
 
-async def attach_event(db: AsyncSession, article: Article, source: Source) -> Event:
+async def attach_event(db: AsyncSession, article: Article) -> Event:
     settings = get_settings()
-    candidates = (await db.scalars(select(Event).order_by(Event.last_seen_at.desc()).limit(200))).all()
+    candidates = (
+        await db.scalars(select(Event).order_by(Event.last_seen_at.desc()).limit(200))
+    ).all()
     best_event: Event | None = None
     best_similarity = -1.0
     vector = list(article.embedding or [])
@@ -80,21 +117,26 @@ async def attach_event(db: AsyncSession, article: Article, source: Source) -> Ev
         await db.flush()
         best_similarity = 1.0
 
-    db.add(EventArticle(event_id=best_event.id, article_id=article.id, similarity=best_similarity))
+    db.add(
+        EventArticle(event_id=best_event.id, article_id=article.id, similarity=best_similarity)
+    )
     best_event.article_count += 1
     best_event.last_seen_at = datetime.now(timezone.utc)
+    await db.flush()
 
     source_count = await db.scalar(
         select(func.count(func.distinct(Article.source_id)))
         .join(EventArticle, EventArticle.article_id == Article.id)
         .where(EventArticle.event_id == best_event.id)
     )
-    best_event.source_count = int(source_count or 0) + (1 if best_event.article_count == 1 else 0)
+    best_event.source_count = int(source_count or 0)
     return best_event
 
 
 async def refresh_signal(db: AsyncSession, event: Event) -> Signal:
-    event_age_days = max(1.0, (datetime.now(timezone.utc) - event.first_seen_at).total_seconds() / 86400)
+    event_age_days = max(
+        1.0, (datetime.now(timezone.utc) - event.first_seen_at).total_seconds() / 86400
+    )
     velocity = min(1.0, event.article_count / max(3.0, event_age_days * 2))
     persistence = min(1.0, math.log1p(event_age_days) / math.log(31))
     breadth = min(1.0, event.source_count / 8)
@@ -106,9 +148,11 @@ async def refresh_signal(db: AsyncSession, event: Event) -> Signal:
         .where(EventArticle.event_id == event.id)
     )
     authority = float(trust or 0.5)
-    novelty = 0.65  # placeholder until historical topic baselines are populated
-    economic_relevance = 0.6  # later derived from explicit economic ontology/features
-    score = signal_score(velocity, persistence, breadth, authority, novelty, economic_relevance)
+    novelty = 0.65  # replaced later by historical topic baselines
+    economic_relevance = 0.6  # replaced later by ontology-derived features
+    score = signal_score(
+        velocity, persistence, breadth, authority, novelty, economic_relevance
+    )
 
     signal = await db.scalar(select(Signal).where(Signal.event_id == event.id))
     if signal is None:
@@ -150,7 +194,12 @@ async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | N
         )
     ).all()
     evidence = [
-        {"id": str(a.id), "title": a.title, "url": a.canonical_url, "insight": a.extracted}
+        {
+            "id": str(a.id),
+            "title": a.title,
+            "url": a.canonical_url,
+            "insight": a.extracted,
+        }
         for a in articles
     ]
 
@@ -158,7 +207,11 @@ async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | N
     thesis = await gateway.structured(
         "opportunity_generate",
         "Generate a practical Vietnam startup thesis only when evidence supports a real customer problem. Avoid generic 'AI platform' ideas. evidence_ids must reference supplied article ids.",
-        {"signal": signal.features, "event": {"id": str(event.id), "title": event.title}, "evidence": evidence},
+        {
+            "signal": signal.features,
+            "event": {"id": str(event.id), "title": event.title},
+            "evidence": evidence,
+        },
         OpportunityThesis,
     )
     skeptic = await gateway.structured(
@@ -170,7 +223,12 @@ async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | N
     judged = await gateway.structured(
         "opportunity_judge",
         "Score conservatively. High scores require evidence for pain, willingness to pay, timing, distribution, competitive gap, and reason to win. Confidence measures evidence quality, not attractiveness.",
-        {"thesis": thesis.model_dump(mode="json"), "skeptic": skeptic.model_dump(mode="json"), "signal": signal.features, "evidence": evidence},
+        {
+            "thesis": thesis.model_dump(mode="json"),
+            "skeptic": skeptic.model_dump(mode="json"),
+            "signal": signal.features,
+            "evidence": evidence,
+        },
         OpportunityScore,
     )
     score = round(judged.weighted_score(), 2)
@@ -201,16 +259,20 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
     urls = await discover_feed_urls(source.feed_url, limit=limit)
     created = 0
     event_ids: set[UUID] = set()
+    failures: list[dict] = []
     for url in urls:
         try:
             article = await ingest_url(db, source, url)
             if article:
                 created += 1
-                event_id = await db.scalar(select(EventArticle.event_id).where(EventArticle.article_id == article.id))
+                event_id = await db.scalar(
+                    select(EventArticle.event_id).where(EventArticle.article_id == article.id)
+                )
                 if event_id:
                     event_ids.add(event_id)
-        except Exception:
-            continue
+        except Exception as exc:
+            logger.warning("crawl failed for %s: %s", url, exc)
+            failures.append({"url": url, "error": str(exc)[:300]})
 
     opportunities = 0
     for event_id in event_ids:
@@ -222,8 +284,14 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
             try:
                 if await build_opportunity(db, signal):
                     opportunities += 1
-            except Exception:
-                # No cloud/local reasoner should never block deterministic ingestion/analytics.
-                pass
+            except Exception as exc:
+                logger.warning("opportunity generation failed for %s: %s", signal.id, exc)
+
     await db.commit()
-    return {"discovered": len(urls), "created": created, "events_updated": len(event_ids), "opportunities": opportunities}
+    return {
+        "discovered": len(urls),
+        "created": created,
+        "events_updated": len(event_ids),
+        "opportunities": opportunities,
+        "failures": failures[:10],
+    }

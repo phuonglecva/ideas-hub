@@ -6,7 +6,7 @@ model_list:
       api_key: os.environ/LOCAL_LLM_API_KEY
   - model_name: openrouter-reasoner
     litellm_params:
-      model: openrouter/os.environ/OPENROUTER_MODEL
+      model: openrouter/anthropic/claude-sonnet-4
       api_key: os.environ/OPENROUTER_API_KEY
 
 router_settings:
