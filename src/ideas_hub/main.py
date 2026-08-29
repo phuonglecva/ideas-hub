@@ -11,10 +11,7 @@ from ideas_hub.storage import ObjectStore
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
-    try:
-        await ObjectStore().ensure_bucket()
-    except Exception:
-        pass
+    await ObjectStore().ensure_bucket()
     yield
 
 

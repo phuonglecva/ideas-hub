@@ -1,6 +1,8 @@
 import asyncio
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ideas_hub.config import get_settings
 
@@ -16,6 +18,12 @@ class ObjectStore:
             aws_secret_access_key=s.minio_secret_key,
         )
 
+    @retry(
+        retry=retry_if_exception_type((BotoCoreError, ClientError)),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        stop=stop_after_attempt(8),
+        reraise=True,
+    )
     async def ensure_bucket(self) -> None:
         def _ensure() -> None:
             existing = {x["Name"] for x in self.client.list_buckets().get("Buckets", [])}

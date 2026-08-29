@@ -1,6 +1,6 @@
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -78,8 +78,7 @@ async def ingest_url(db: AsyncSession, source: Source, url: str) -> Article | No
             ArticleInsight,
         )
         article.extracted = insight.model_dump(mode="json")
-    except Exception as exc:
-        # In local-first mode ingestion remains useful even if no LLM server is running.
+    except Exception as exc:  # noqa: BLE001 - optional AI stage must not block ingestion
         logger.warning("article extraction failed for %s: %s", article.id, exc)
         article.extracted = {
             "entities": [],
@@ -121,7 +120,7 @@ async def attach_event(db: AsyncSession, article: Article) -> Event:
         EventArticle(event_id=best_event.id, article_id=article.id, similarity=best_similarity)
     )
     best_event.article_count += 1
-    best_event.last_seen_at = datetime.now(timezone.utc)
+    best_event.last_seen_at = datetime.now(UTC)
     await db.flush()
 
     source_count = await db.scalar(
@@ -135,7 +134,7 @@ async def attach_event(db: AsyncSession, article: Article) -> Event:
 
 async def refresh_signal(db: AsyncSession, event: Event) -> Signal:
     event_age_days = max(
-        1.0, (datetime.now(timezone.utc) - event.first_seen_at).total_seconds() / 86400
+        1.0, (datetime.now(UTC) - event.first_seen_at).total_seconds() / 86400
     )
     velocity = min(1.0, event.article_count / max(3.0, event_age_days * 2))
     persistence = min(1.0, math.log1p(event_age_days) / math.log(31))
@@ -270,7 +269,7 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
                 )
                 if event_id:
                     event_ids.add(event_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate one bad external article
             logger.warning("crawl failed for %s: %s", url, exc)
             failures.append({"url": url, "error": str(exc)[:300]})
 
@@ -284,7 +283,7 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
             try:
                 if await build_opportunity(db, signal):
                     opportunities += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - optional reasoning must not block analytics
                 logger.warning("opportunity generation failed for %s: %s", signal.id, exc)
 
     await db.commit()

@@ -1,7 +1,7 @@
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -41,7 +41,7 @@ def parse_published_at(value: str | None) -> datetime | None:
     # timestamp as publication-local time rather than the server's local timezone.
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=VIETNAM_TZ)
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 async def fetch_article(url: str) -> CrawledArticle:
