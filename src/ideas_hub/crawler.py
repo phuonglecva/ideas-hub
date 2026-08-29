@@ -3,11 +3,14 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import feedparser
 import httpx
 import trafilatura
 from dateutil import parser as date_parser
+
+VIETNAM_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 @dataclass
@@ -30,24 +33,48 @@ def article_hash(title: str, body: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def parse_published_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = date_parser.parse(value)
+    # Vietnamese publishers frequently omit timezone information. Treat a naive
+    # timestamp as publication-local time rather than the server's local timezone.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=VIETNAM_TZ)
+    return parsed.astimezone(timezone.utc)
+
+
 async def fetch_article(url: str) -> CrawledArticle:
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers={"User-Agent": "IdeasHub/0.1 research crawler"}) as client:
+    async with httpx.AsyncClient(
+        timeout=30,
+        follow_redirects=True,
+        headers={"User-Agent": "IdeasHub/0.1 research crawler"},
+    ) as client:
         response = await client.get(url)
         response.raise_for_status()
+
     html = response.text
-    result = trafilatura.bare_extraction(html, url=str(response.url), with_metadata=True, include_comments=False, include_tables=False)
-    if not result or not result.get("text"):
+    document = trafilatura.bare_extraction(
+        html,
+        url=str(response.url),
+        with_metadata=True,
+        include_comments=False,
+        include_tables=False,
+    )
+    if document is None:
+        raise ValueError(f"Could not extract article from {url}")
+    result = document.as_dict()
+    if not result.get("text"):
         raise ValueError(f"Could not extract article body from {url}")
+
     title = normalize_text(result.get("title") or urlparse(url).path.rsplit("/", 1)[-1])
     body = normalize_text(result["text"])
-    published = result.get("date")
-    published_at = date_parser.parse(published).astimezone(timezone.utc) if published else None
     return CrawledArticle(
         url=str(response.url),
         title=title,
         body=body,
         author=result.get("author"),
-        published_at=published_at,
+        published_at=parse_published_at(result.get("date")),
         raw_html=html,
         content_hash=article_hash(title, body),
     )

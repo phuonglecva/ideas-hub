@@ -65,7 +65,15 @@ services:
   vllm:
     profiles: ["local-ai"]
     image: vllm/vllm-openai:latest
-    command: ["--model", "${VLLM_MODEL:-Qwen/Qwen3-8B}", "--host", "0.0.0.0", "--port", "8001"]
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen3-8B}
+      - --served-model-name
+      - ${LOCAL_LLM_MODEL:-local-model}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
     ports: ["8001:8001"]
     ipc: host
     deploy:
