@@ -1,14 +1,21 @@
 import asyncio
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from ideas_hub.config import get_settings
 
 
 @lru_cache
-def _model() -> SentenceTransformer:
+def _model() -> Any:
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise RuntimeError(
+            "Local embeddings are not installed. Install Ideas Hub with the local-ai extra: "
+            "pip install '.[local-ai]'"
+        ) from exc
     return SentenceTransformer(get_settings().embedding_model)
 
 

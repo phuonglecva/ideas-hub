@@ -24,13 +24,15 @@ dependencies = [
   "boto3>=1.39",
   "openai>=1.99",
   "anthropic>=0.64",
-  "sentence-transformers>=5.1",
   "numpy>=2.2",
   "tenacity>=9.1",
   "python-dateutil>=2.9",
 ]
 
 [project.optional-dependencies]
+local-ai = [
+  "sentence-transformers>=5.1",
+]
 dev = [
   "pytest>=8.4",
   "pytest-asyncio>=1.1",

@@ -47,7 +47,7 @@ Internet / RSS / URLs
 - Local embeddings: Sentence Transformers (`BAAI/bge-m3` by default)
 - Local LLM: any OpenAI-compatible endpoint, designed for vLLM/Ollama
 - Model routing: app-level provider abstraction; optional LiteLLM proxy
-- Cloud fallback: OpenRouter, OpenAI, Anthropic
+- Cloud fallback/provider choices: OpenRouter, OpenAI, Anthropic
 - Web: Next.js
 
 ## Quick start
@@ -63,13 +63,21 @@ Open:
 - Web: http://localhost:3000
 - MinIO console: http://localhost:9001
 
-The default configuration is local-first. It does **not** require a cloud API key. To enable local LLM reasoning, start an OpenAI-compatible server such as vLLM and point `LOCAL_LLM_BASE_URL` at it.
+Docker images install the `local-ai` Python extra, so local embeddings are available by default in containers. For a host-only Python environment use:
+
+```bash
+pip install '.[local-ai]'
+```
+
+The default configuration does **not** require a cloud API key. If no LLM endpoint is running, deterministic ingestion/analytics still work and article extraction gracefully falls back to empty structured insight.
 
 Optional local vLLM service:
 
 ```bash
 docker compose --profile local-ai up --build
 ```
+
+The Compose vLLM service exposes the model under `LOCAL_LLM_MODEL` (default `local-model`) so the application remains independent of the underlying Hugging Face model ID.
 
 Optional LiteLLM gateway:
 
