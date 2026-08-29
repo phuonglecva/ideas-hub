@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ideas-hub"
+version = "0.1.0"
+description = "Local-first news intelligence and startup opportunity engine"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116",
+  "uvicorn[standard]>=0.35",
+  "pydantic>=2.11",
+  "pydantic-settings>=2.10",
+  "sqlalchemy[asyncio]>=2.0.41",
+  "asyncpg>=0.30",
+  "pgvector>=0.4",
+  "httpx>=0.28",
+  "trafilatura>=2.0",
+  "selectolax>=0.3.29",
+  "feedparser>=6.0.11",
+  "redis>=6.2",
+  "celery>=5.5",
+  "boto3>=1.39",
+  "openai>=1.99",
+  "anthropic>=0.64",
+  "sentence-transformers>=5.1",
+  "numpy>=2.2",
+  "tenacity>=9.1",
+  "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4",
+  "pytest-asyncio>=1.1",
+  "ruff>=0.12",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ideas_hub"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"

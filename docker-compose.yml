@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ideas
+      POSTGRES_USER: ideas
+      POSTGRES_PASSWORD: ideas
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ideas -d ideas"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["miniodata:/data"]
+
+  api:
+    build: .
+    env_file: .env
+    command: uvicorn ideas_hub.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes: ["./src:/app/src"]
+    ports: ["8000:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  worker:
+    build: .
+    env_file: .env
+    command: celery -A ideas_hub.worker.celery_app worker --loglevel=INFO
+    volumes: ["./src:/app/src"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  web:
+    build: ./web
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+  vllm:
+    profiles: ["local-ai"]
+    image: vllm/vllm-openai:latest
+    command: ["--model", "${VLLM_MODEL:-Qwen/Qwen3-8B}", "--host", "0.0.0.0", "--port", "8001"]
+    ports: ["8001:8001"]
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  litellm:
+    profiles: ["ai-gateway"]
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes: ["./infra/litellm.yaml:/app/config.yaml:ro"]
+    ports: ["4000:4000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+volumes:
+  pgdata:
+  miniodata:
