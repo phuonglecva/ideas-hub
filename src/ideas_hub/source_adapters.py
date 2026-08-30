@@ -37,20 +37,19 @@ async def _fetch_bytes(
         follow_redirects=True,
         headers={"User-Agent": USER_AGENT},
         transport=transport,
-    ) as client:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            declared = int(response.headers.get("content-length") or 0)
-            if declared > max_bytes:
+    ) as client, client.stream("GET", url) as response:
+        response.raise_for_status()
+        declared = int(response.headers.get("content-length") or 0)
+        if declared > max_bytes:
+            raise ValueError(f"Source response exceeds {max_bytes} bytes")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            if size > max_bytes:
                 raise ValueError(f"Source response exceeds {max_bytes} bytes")
-            chunks: list[bytes] = []
-            size = 0
-            async for chunk in response.aiter_bytes():
-                size += len(chunk)
-                if size > max_bytes:
-                    raise ValueError(f"Source response exceeds {max_bytes} bytes")
-                chunks.append(chunk)
-            return b"".join(chunks)
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 class RSSSourceAdapter:
