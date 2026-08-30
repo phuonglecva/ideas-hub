@@ -1,15 +1,15 @@
+from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ideas_hub.db import get_db
 from ideas_hub.config import get_settings
+from ideas_hub.db import get_db
 from ideas_hub.models import (
     Article,
     CrawlRun,
@@ -30,10 +30,10 @@ from ideas_hub.schemas import (
     OpportunityOut,
     OpportunityUpdate,
     SignalOut,
-    SourceCreate,
     SourceCandidateCreate,
     SourceCandidateEvidenceOut,
     SourceCandidateOut,
+    SourceCreate,
     SourceOut,
     SourceUpdate,
 )
