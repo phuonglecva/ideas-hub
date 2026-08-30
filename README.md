@@ -11,10 +11,14 @@ The system keeps data, embeddings, analytics, and most inference local. Cloud mo
 ## Architecture
 
 ```text
-Internet / RSS / URLs
+Internet / RSS / Sitemap / URLs
         |
         v
  Source Registry
+        |
+        v
+ Source Adapters
+   RSS | Sitemap
         |
         v
  Crawl + Normalize -----> MinIO raw snapshots
@@ -82,14 +86,26 @@ The Compose vLLM service loads and exposes `LOCAL_LLM_MODEL`. The default,
 `Qwen/Qwen3-14B-AWQ`, is sized for a 24 GB RTX 4090. It uses a 16K context window
 to leave enough VRAM for concurrent pipeline requests.
 
-On the first start, the API idempotently seeds 17 Vietnamese business, policy,
-jobs, startup, and technology feeds. New seed sources bootstrap at three items;
-the `scheduler` queues all enabled feeds at `CRAWL_LIMIT` every
+On the first start, the API idempotently seeds 40 verified Vietnamese market-intelligence
+RSS feeds spanning general business news, finance, banking, securities, investment,
+technology, startups, AI and policy. New seed sources bootstrap at three items; the
+`scheduler` queues all enabled feeds at `CRAWL_LIMIT` every
 `CRAWL_INTERVAL_MINUTES` (10 items every 30 minutes by default). Follow it with:
 
 ```bash
 docker compose logs -f scheduler worker
 ```
+
+After a source has at least one stored article, each scheduled crawl scans the full
+current RSS/Atom window (capped at 500 entries) and removes already-known canonical
+URLs in one database query before fetching article pages. This prevents the old
+head-only behavior from losing articles when a publisher emits more than
+`CRAWL_LIMIT` entries between scheduler runs.
+
+`Source.source_type` selects the ingestion adapter. Existing `news` records remain an
+RSS alias for backward compatibility; new sources can use `rss` or `sitemap`. Sitemap
+sources accept a sitemap or sitemap-index URL in `feed_url`, follow up to eight recent
+child maps and inspect up to 1,000 recent URLs per crawl.
 
 Optional LiteLLM gateway:
 
@@ -124,6 +140,18 @@ TASK_OPPORTUNITY_JUDGE_PROVIDER=openrouter
 2. Trigger `POST /v1/pipeline/sources/{source_id}/crawl`.
 3. Inspect `/v1/articles`, `/v1/events`, `/v1/signals`, and `/v1/opportunities`.
 4. Background processing can run through Celery with `POST /v1/pipeline/sources/{source_id}/enqueue`.
+
+Example sitemap source:
+
+```json
+{
+  "name": "Publisher sitemap",
+  "domain": "publisher.vn/sitemap",
+  "source_type": "sitemap",
+  "feed_url": "https://publisher.vn/sitemap.xml",
+  "trust_score": 0.8
+}
+```
 
 ## Source discovery
 
