@@ -40,3 +40,10 @@ class ObjectStore:
             Body=text.encode("utf-8"),
             ContentType=content_type,
         )
+
+    async def get_text(self, key: str) -> str:
+        def _get() -> str:
+            response = self.client.get_object(Bucket=self.bucket, Key=key)
+            return response["Body"].read().decode("utf-8", errors="replace")
+
+        return await asyncio.to_thread(_get)

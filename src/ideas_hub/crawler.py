@@ -84,5 +84,5 @@ async def discover_feed_urls(feed_url: str, limit: int = 30) -> list[str]:
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         response = await client.get(feed_url)
         response.raise_for_status()
-    feed = feedparser.loads(response.content)
+    feed = feedparser.parse(response.content)
     return [entry.link for entry in feed.entries[:limit] if getattr(entry, "link", None)]

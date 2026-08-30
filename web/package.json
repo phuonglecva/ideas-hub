@@ -1,1 +1,1 @@
-{"name":"ideas-hub-web","private":true,"scripts":{"dev":"next dev -H 0.0.0.0","build":"next build","start":"next start -H 0.0.0.0"},"dependencies":{"next":"15.4.6","react":"19.1.1","react-dom":"19.1.1"},"devDependencies":{}}
+{"name":"ideas-hub-web","private":true,"scripts":{"dev":"next dev -H 0.0.0.0 -p 3333","build":"next build","start":"next start -H 0.0.0.0 -p 3333"},"dependencies":{"next":"15.4.6","react":"19.1.1","react-dom":"19.1.1"},"devDependencies":{}}

@@ -1,5 +1,7 @@
 from datetime import UTC
 
+import feedparser
+
 from ideas_hub.crawler import article_hash, parse_published_at
 
 
@@ -12,3 +14,11 @@ def test_naive_vietnam_publication_time_is_converted_to_utc():
     assert parsed is not None
     assert parsed.tzinfo == UTC
     assert parsed.hour == 10
+
+
+def test_feedparser_parse_accepts_rss_bytes():
+    feed = feedparser.parse(
+        b"<rss version='2.0'><channel><item><link>https://example.com/a</link></item>"
+        b"</channel></rss>"
+    )
+    assert feed.entries[0].link == "https://example.com/a"

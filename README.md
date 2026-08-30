@@ -59,8 +59,9 @@ docker compose up --build
 
 Open:
 
-- API: http://localhost:8000/docs
-- Web: http://localhost:3000
+- API: http://localhost:8888/docs
+- Web: http://localhost:3333
+- CMS / data operations: http://localhost:3333/cms
 - MinIO console: http://localhost:9001
 
 Docker images install the `local-ai` Python extra, so local embeddings are available by default in containers. For a host-only Python environment use:
@@ -77,7 +78,18 @@ Optional local vLLM service:
 docker compose --profile local-ai up --build
 ```
 
-The Compose vLLM service exposes the model under `LOCAL_LLM_MODEL` (default `local-model`) so the application remains independent of the underlying Hugging Face model ID.
+The Compose vLLM service loads and exposes `LOCAL_LLM_MODEL`. The default,
+`Qwen/Qwen3-14B-AWQ`, is sized for a 24 GB RTX 4090. It uses a 16K context window
+to leave enough VRAM for concurrent pipeline requests.
+
+On the first start, the API idempotently seeds 17 Vietnamese business, policy,
+jobs, startup, and technology feeds. New seed sources bootstrap at three items;
+the `scheduler` queues all enabled feeds at `CRAWL_LIMIT` every
+`CRAWL_INTERVAL_MINUTES` (10 items every 30 minutes by default). Follow it with:
+
+```bash
+docker compose logs -f scheduler worker
+```
 
 Optional LiteLLM gateway:
 
@@ -112,6 +124,28 @@ TASK_OPPORTUNITY_JUDGE_PROVIDER=openrouter
 2. Trigger `POST /v1/pipeline/sources/{source_id}/crawl`.
 3. Inspect `/v1/articles`, `/v1/events`, `/v1/signals`, and `/v1/opportunities`.
 4. Background processing can run through Celery with `POST /v1/pipeline/sources/{source_id}/enqueue`.
+
+## Source discovery
+
+Every ingest records eligible external publisher links without letting a discovery
+failure roll back the article. Once per day, the worker also scans the latest raw
+HTML snapshots in MinIO, discovers RSS/Atom feeds, samples article extraction, and
+scores candidates on feed validity, freshness, extractability, market relevance,
+referral diversity, and HTTPS.
+
+- Score 85+ is auto-approved only when every safety and quality gate also passes.
+- Score 60–84 stays in the CMS review queue; lower scores are rejected.
+- Rejected sources are not automatically proposed again. Transient failures retry
+  in up to three discovery cycles.
+- Discovery fetches permit only HTTP(S) ports 80/443, validate DNS and each redirect,
+  block non-public IP space, cap redirects at three, and cap responses at 2 MB.
+
+Operators can inspect candidates and crawl history at `/cms`, or use
+`/v1/source-candidates`, `/v1/source-discovery/enqueue`, and `/v1/crawl-runs`.
+
+Signals enter the three-stage opportunity generator at
+`SIGNAL_OPPORTUNITY_THRESHOLD` (50 by default). Existing eligible signals can be
+processed idempotently with `POST /v1/opportunities/backfill`.
 
 ## Design principles
 

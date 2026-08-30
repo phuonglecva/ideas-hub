@@ -38,7 +38,16 @@ class Settings(BaseSettings):
 
     embedding_model: str = "BAAI/bge-m3"
     event_similarity_threshold: float = 0.82
+    signal_opportunity_threshold: float = 50
     cloud_fallback_enabled: bool = False
+
+    seed_default_sources: bool = True
+    crawl_interval_minutes: int = 30
+    crawl_limit: int = 10
+    source_discovery_interval_hours: int = 24
+    source_discovery_article_limit: int = 200
+    source_auto_approve_score: float = 85
+    source_bootstrap_limit: int = 3
 
 
 @lru_cache

@@ -1,7 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SourceCreate(BaseModel):
@@ -11,11 +13,109 @@ class SourceCreate(BaseModel):
     feed_url: str | None = None
     trust_score: float = Field(0.5, ge=0, le=1)
 
+    @field_validator("name", "domain", "source_type")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("feed_url")
+    @classmethod
+    def normalize_feed_url(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class SourceUpdate(BaseModel):
+    name: str | None = None
+    domain: str | None = None
+    source_type: str | None = None
+    feed_url: str | None = None
+    trust_score: float | None = Field(None, ge=0, le=1)
+    enabled: bool | None = None
+
+    @field_validator("name", "domain", "source_type")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("feed_url")
+    @classmethod
+    def normalize_optional_feed_url(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
 
 class SourceOut(SourceCreate):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     enabled: bool
+    created_at: datetime
+
+
+class SourceCandidateCreate(BaseModel):
+    name: str | None = None
+    homepage_url: str
+    feed_url: str | None = None
+
+
+class SourceCandidateEvidenceOut(BaseModel):
+    article_id: UUID
+    article_title: str
+    article_url: str
+    source_name: str
+    discovered_url: str
+
+
+class SourceCandidateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    name: str | None
+    domain: str
+    homepage_url: str
+    feed_url: str | None
+    discovery_url: str | None
+    discovery_method: str
+    status: str
+    score: float
+    score_breakdown: dict
+    entry_count: int
+    extraction_rate: float
+    mention_count: int
+    source_count: int
+    sample_headlines: list
+    latest_entry_at: datetime | None
+    last_checked_at: datetime | None
+    failure_reason: str | None
+    retry_count: int
+    source_id: UUID | None
+    created_at: datetime
+    evidence: list[SourceCandidateEvidenceOut] = Field(default_factory=list)
+
+
+class CrawlRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    source_id: UUID
+    task_id: str | None
+    trigger: str
+    status: str
+    limit: int
+    discovered: int
+    created: int
+    events_updated: int
+    opportunities: int
+    failures: list
+    error: str | None
+    queued_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    duration_ms: int | None
 
 
 class ArticleInsight(BaseModel):
@@ -27,6 +127,57 @@ class ArticleInsight(BaseModel):
     claims: list[str] = []
     metrics: list[str] = []
     regulations: list[str] = []
+
+
+class ArticleUpdate(BaseModel):
+    title: str | None = None
+    canonical_url: str | None = None
+    author: str | None = None
+    published_at: datetime | None = None
+    extracted: ArticleInsight | None = None
+
+    @field_validator("title", "canonical_url")
+    @classmethod
+    def strip_article_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+
+class EventUpdate(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def strip_event_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+
+class OpportunityUpdate(BaseModel):
+    title: str | None = None
+    customer: str | None = None
+    problem: str | None = None
+    solution: str | None = None
+    status: Literal["candidate", "reviewing", "validated", "rejected", "archived"] | None = None
+
+    @field_validator("title", "customer", "problem", "solution")
+    @classmethod
+    def strip_opportunity_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
 
 
 class OpportunityThesis(BaseModel):
@@ -87,6 +238,7 @@ class ArticleOut(BaseModel):
     source_id: UUID
     canonical_url: str
     title: str
+    author: str | None
     published_at: datetime | None
     extracted: dict | None
 

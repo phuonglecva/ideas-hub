@@ -38,6 +38,40 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SourceCandidate(Base):
+    __tablename__ = "source_candidates"
+    __table_args__ = (
+        UniqueConstraint("domain", name="uq_source_candidate_domain"),
+        UniqueConstraint("feed_url", name="uq_source_candidate_feed_url"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True)
+    homepage_url: Mapped[str] = mapped_column(Text)
+    feed_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovery_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovery_method: Mapped[str] = mapped_column(String(40), default="outbound_link")
+    status: Mapped[str] = mapped_column(String(30), default="discovered", index=True)
+    score: Mapped[float] = mapped_column(Float, default=0, index=True)
+    score_breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
+    entry_count: Mapped[int] = mapped_column(Integer, default=0)
+    extraction_rate: Mapped[float] = mapped_column(Float, default=0)
+    mention_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_count: Mapped[int] = mapped_column(Integer, default=0)
+    sample_headlines: Mapped[list] = mapped_column(JSON, default=list)
+    latest_entry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sources.id"), nullable=True, unique=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Article(Base):
     __tablename__ = "articles"
     __table_args__ = (UniqueConstraint("canonical_url", name="uq_article_url"),)
@@ -55,6 +89,39 @@ class Article(Base):
     raw_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     extracted: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class SourceCandidateEvidence(Base):
+    __tablename__ = "source_candidate_evidence"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "article_id", name="uq_candidate_article_evidence"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("source_candidates.id"), index=True)
+    article_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("articles.id"), index=True)
+    referring_source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    discovered_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CrawlRun(Base):
+    __tablename__ = "crawl_runs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    trigger: Mapped[str] = mapped_column(String(30), default="manual")
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    limit: Mapped[int] = mapped_column(Integer, default=10)
+    discovered: Mapped[int] = mapped_column(Integer, default=0)
+    created: Mapped[int] = mapped_column(Integer, default=0)
+    events_updated: Mapped[int] = mapped_column(Integer, default=0)
+    opportunities: Mapped[int] = mapped_column(Integer, default=0)
+    failures: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Event(Base):

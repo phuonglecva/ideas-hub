@@ -26,3 +26,15 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # create_all does not retrofit constraints when upgrading an existing
+        # local database created by an earlier development build.
+        candidate_domain_index = await conn.scalar(
+            text("SELECT to_regclass('public.uq_source_candidate_domain_idx')")
+        )
+        if candidate_domain_index is None:
+            await conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX uq_source_candidate_domain_idx "
+                    "ON source_candidates (domain)"
+                )
+            )

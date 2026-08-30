@@ -29,9 +29,11 @@ services:
   api:
     build: .
     env_file: .env
-    command: uvicorn ideas_hub.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      PYTHONPATH: /app/src
+    command: uvicorn ideas_hub.main:app --host 0.0.0.0 --port 8888 --reload
     volumes: ["./src:/app/src"]
-    ports: ["8000:8000"]
+    ports: ["8888:8888"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,7 +46,9 @@ services:
   worker:
     build: .
     env_file: .env
-    command: celery -A ideas_hub.worker.celery_app worker --loglevel=INFO
+    environment:
+      PYTHONPATH: /app/src
+    command: celery -A ideas_hub.worker.celery_app worker --loglevel=INFO --concurrency=${WORKER_CONCURRENCY:-2}
     volumes: ["./src:/app/src"]
     depends_on:
       postgres:
@@ -55,25 +59,42 @@ services:
         condition: service_started
     extra_hosts: ["host.docker.internal:host-gateway"]
 
+  scheduler:
+    build: .
+    env_file: .env
+    environment:
+      PYTHONPATH: /app/src
+    command: celery -A ideas_hub.worker.celery_app beat --loglevel=INFO
+    volumes: ["./src:/app/src"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   web:
     build: ./web
     environment:
-      NEXT_PUBLIC_API_URL: http://api:8000
-    ports: ["3000:3000"]
+      NEXT_PUBLIC_API_URL: http://api:8888
+      NEXT_PUBLIC_BROWSER_API_URL: http://localhost:8888
+    ports: ["3333:3333"]
     depends_on: [api]
 
   vllm:
     profiles: ["local-ai"]
     image: vllm/vllm-openai:latest
     command:
-      - --model
-      - ${VLLM_MODEL:-Qwen/Qwen3-8B}
+      - ${LOCAL_LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       - --served-model-name
-      - ${LOCAL_LLM_MODEL:-local-model}
+      - ${LOCAL_LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       - --host
       - 0.0.0.0
       - --port
       - "8001"
+      - --max-model-len
+      - "16384"
+      - --gpu-memory-utilization
+      - "0.92"
     ports: ["8001:8001"]
     ipc: host
     deploy:

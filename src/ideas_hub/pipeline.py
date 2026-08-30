@@ -12,6 +12,7 @@ from ideas_hub.embeddings import cosine_similarity, embed_text
 from ideas_hub.model_gateway import ModelGateway
 from ideas_hub.models import Article, Event, EventArticle, Opportunity, Signal, Source
 from ideas_hub.schemas import ArticleInsight, OpportunityScore, OpportunityThesis, SkepticReview
+from ideas_hub.source_discovery import record_outbound_candidates
 from ideas_hub.storage import ObjectStore
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,11 @@ def signal_score(
         ),
         2,
     )
+
+
+def is_signal_eligible(score: float, threshold: float | None = None) -> bool:
+    cutoff = threshold if threshold is not None else get_settings().signal_opportunity_threshold
+    return score >= cutoff
 
 
 async def ingest_url(db: AsyncSession, source: Source, url: str) -> Article | None:
@@ -92,6 +98,11 @@ async def ingest_url(db: AsyncSession, source: Source, url: str) -> Article | No
         }
 
     await attach_event(db, article)
+    try:
+        async with db.begin_nested():
+            await record_outbound_candidates(db, article, source, crawled.raw_html)
+    except Exception as exc:  # noqa: BLE001 - discovery must never block ingestion
+        logger.warning("source candidate extraction failed for %s: %s", article.id, exc)
     return article
 
 
@@ -116,9 +127,7 @@ async def attach_event(db: AsyncSession, article: Article) -> Event:
         await db.flush()
         best_similarity = 1.0
 
-    db.add(
-        EventArticle(event_id=best_event.id, article_id=article.id, similarity=best_similarity)
-    )
+    db.add(EventArticle(event_id=best_event.id, article_id=article.id, similarity=best_similarity))
     best_event.article_count += 1
     best_event.last_seen_at = datetime.now(UTC)
     await db.flush()
@@ -133,9 +142,7 @@ async def attach_event(db: AsyncSession, article: Article) -> Event:
 
 
 async def refresh_signal(db: AsyncSession, event: Event) -> Signal:
-    event_age_days = max(
-        1.0, (datetime.now(UTC) - event.first_seen_at).total_seconds() / 86400
-    )
+    event_age_days = max(1.0, (datetime.now(UTC) - event.first_seen_at).total_seconds() / 86400)
     velocity = min(1.0, event.article_count / max(3.0, event_age_days * 2))
     persistence = min(1.0, math.log1p(event_age_days) / math.log(31))
     breadth = min(1.0, event.source_count / 8)
@@ -149,9 +156,7 @@ async def refresh_signal(db: AsyncSession, event: Event) -> Signal:
     authority = float(trust or 0.5)
     novelty = 0.65  # replaced later by historical topic baselines
     economic_relevance = 0.6  # replaced later by ontology-derived features
-    score = signal_score(
-        velocity, persistence, breadth, authority, novelty, economic_relevance
-    )
+    score = signal_score(velocity, persistence, breadth, authority, novelty, economic_relevance)
 
     signal = await db.scalar(select(Signal).where(Signal.event_id == event.id))
     if signal is None:
@@ -179,8 +184,14 @@ async def refresh_signal(db: AsyncSession, event: Event) -> Signal:
 
 
 async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | None:
-    event = await db.get(Event, signal.event_id)
-    if not event or signal.score < 35:
+    locked_signal = await db.scalar(select(Signal).where(Signal.id == signal.id).with_for_update())
+    if locked_signal is None or not is_signal_eligible(locked_signal.score):
+        return None
+    event = await db.get(Event, locked_signal.event_id)
+    if not event:
+        return None
+    existing = await db.scalar(select(Opportunity).where(Opportunity.signal_id == locked_signal.id))
+    if existing is not None:
         return None
 
     articles = (
@@ -207,7 +218,7 @@ async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | N
         "opportunity_generate",
         "Generate a practical Vietnam startup thesis only when evidence supports a real customer problem. Avoid generic 'AI platform' ideas. evidence_ids must reference supplied article ids.",
         {
-            "signal": signal.features,
+            "signal": locked_signal.features,
             "event": {"id": str(event.id), "title": event.title},
             "evidence": evidence,
         },
@@ -225,14 +236,14 @@ async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | N
         {
             "thesis": thesis.model_dump(mode="json"),
             "skeptic": skeptic.model_dump(mode="json"),
-            "signal": signal.features,
+            "signal": locked_signal.features,
             "evidence": evidence,
         },
         OpportunityScore,
     )
     score = round(judged.weighted_score(), 2)
     opp = Opportunity(
-        signal_id=signal.id,
+        signal_id=locked_signal.id,
         title=thesis.title,
         customer=thesis.customer,
         problem=thesis.problem,
@@ -248,6 +259,48 @@ async def build_opportunity(db: AsyncSession, signal: Signal) -> Opportunity | N
     return opp
 
 
+async def backfill_opportunities(db: AsyncSession, limit: int = 100) -> dict:
+    eligible_ids = (
+        await db.scalars(
+            select(Signal.id)
+            .where(
+                Signal.score >= get_settings().signal_opportunity_threshold,
+                ~select(Opportunity.id).where(Opportunity.signal_id == Signal.id).exists(),
+            )
+            .order_by(Signal.score.desc())
+            .limit(limit)
+        )
+    ).all()
+    created = 0
+    skipped = 0
+    failures: list[dict] = []
+    for signal_id in eligible_ids:
+        try:
+            async with db.begin_nested():
+                signal = await db.get(Signal, signal_id)
+                if signal is None or not is_signal_eligible(signal.score):
+                    skipped += 1
+                    continue
+                if await build_opportunity(db, signal):
+                    created += 1
+                else:
+                    skipped += 1
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 - isolate one model run from the batch
+            await db.rollback()
+            logger.warning("opportunity backfill failed for %s: %s", signal_id, exc)
+            failures.append({"signal_id": str(signal_id), "error": str(exc)[:500]})
+    result = {
+        "eligible": len(eligible_ids),
+        "created": created,
+        "skipped": skipped,
+        "failed": len(failures),
+        "failures": failures,
+    }
+    logger.info("opportunity backfill complete: %s", result)
+    return result
+
+
 async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> dict:
     source = await db.get(Source, source_id)
     if not source or not source.enabled:
@@ -261,7 +314,8 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
     failures: list[dict] = []
     for url in urls:
         try:
-            article = await ingest_url(db, source, url)
+            async with db.begin_nested():
+                article = await ingest_url(db, source, url)
             if article:
                 created += 1
                 event_id = await db.scalar(
@@ -279,7 +333,7 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
         if not event:
             continue
         signal = await refresh_signal(db, event)
-        if signal.score >= 55:
+        if is_signal_eligible(signal.score):
             try:
                 if await build_opportunity(db, signal):
                     opportunities += 1
