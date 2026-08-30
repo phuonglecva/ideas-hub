@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ideas_hub.models import Source
 
-
 DEFAULT_SOURCES = (
     {"name": "VnExpress Kinh doanh", "domain": "vnexpress.net/kinh-doanh", "feed_url": "https://vnexpress.net/rss/kinh-doanh.rss", "trust_score": 0.85},
     {"name": "VnExpress Khoa học công nghệ", "domain": "vnexpress.net/khoa-hoc-cong-nghe", "feed_url": "https://vnexpress.net/rss/khoa-hoc-cong-nghe.rss", "trust_score": 0.85},
