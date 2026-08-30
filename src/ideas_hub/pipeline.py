@@ -7,11 +7,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ideas_hub.config import get_settings
-from ideas_hub.crawler import discover_feed_urls, fetch_article
+from ideas_hub.crawler import fetch_article
 from ideas_hub.embeddings import cosine_similarity, embed_text
 from ideas_hub.model_gateway import ModelGateway
 from ideas_hub.models import Article, Event, EventArticle, Opportunity, Signal, Source
 from ideas_hub.schemas import ArticleInsight, OpportunityScore, OpportunityThesis, SkepticReview
+from ideas_hub.source_adapters import get_source_adapter
 from ideas_hub.source_discovery import record_outbound_candidates
 from ideas_hub.storage import ObjectStore
 
@@ -46,6 +47,12 @@ def is_signal_eligible(score: float, threshold: float | None = None) -> bool:
 
 
 async def ingest_url(db: AsyncSession, source: Source, url: str) -> Article | None:
+    # Avoid downloading, extracting, embedding and invoking the LLM for feed entries
+    # whose canonical URL is already present. Content-hash dedupe below remains the
+    # second line of defense for redirects, tracking URLs and syndicated copies.
+    if await db.scalar(select(Article.id).where(Article.canonical_url == url)):
+        return None
+
     crawled = await fetch_article(url)
     existing = await db.scalar(
         select(Article).where(
@@ -306,13 +313,33 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
     if not source or not source.enabled:
         raise ValueError("Source not found or disabled")
     if not source.feed_url:
-        raise ValueError("MVP source requires feed_url")
+        raise ValueError("Source requires feed_url or sitemap URL")
 
-    urls = await discover_feed_urls(source.feed_url, limit=limit)
+    adapter = get_source_adapter(source)
+    has_articles = bool(
+        await db.scalar(select(func.count(Article.id)).where(Article.source_id == source.id))
+    )
+    # Bootstrap is intentionally bounded. Once a source has history, scan its full
+    # current feed/sitemap window and pre-filter known URLs in one DB query. This
+    # avoids the previous head-only behavior where >limit posts between schedules
+    # could disappear from the ingestion window forever.
+    batch = await adapter.discover(source, limit=limit if not has_articles else None)
+    urls = batch.urls
+    known_urls: set[str] = set()
+    if urls:
+        known_urls = set(
+            (
+                await db.scalars(
+                    select(Article.canonical_url).where(Article.canonical_url.in_(urls))
+                )
+            ).all()
+        )
+    candidate_urls = [url for url in urls if url not in known_urls]
+
     created = 0
     event_ids: set[UUID] = set()
     failures: list[dict] = []
-    for url in urls:
+    for url in candidate_urls:
         try:
             async with db.begin_nested():
                 article = await ingest_url(db, source, url)
@@ -343,6 +370,9 @@ async def crawl_source(db: AsyncSession, source_id: UUID, limit: int = 20) -> di
     await db.commit()
     return {
         "discovered": len(urls),
+        "candidates": len(candidate_urls),
+        "known_skipped": len(known_urls),
+        "source_kind": batch.source_kind,
         "created": created,
         "events_updated": len(event_ids),
         "opportunities": opportunities,
