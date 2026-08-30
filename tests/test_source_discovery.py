@@ -1,5 +1,5 @@
-import httpx
 import feedparser
+import httpx
 import pytest
 
 from ideas_hub.bootstrap import DEFAULT_SOURCES
@@ -8,8 +8,8 @@ from ideas_hub.source_discovery import (
     calculate_candidate_score,
     extract_external_links,
     feed_links_from_html,
-    is_public_ip,
     is_parsed_feed_valid,
+    is_public_ip,
     normalize_url,
     passes_auto_approve_gates,
     safe_fetch,
@@ -17,10 +17,12 @@ from ideas_hub.source_discovery import (
 )
 
 
-def test_default_sources_are_17_unique_market_feeds():
+def test_default_sources_are_40_unique_market_feeds():
     feeds = [source["feed_url"] for source in DEFAULT_SOURCES]
-    assert len(DEFAULT_SOURCES) == 17
+    domains = [source["domain"] for source in DEFAULT_SOURCES]
+    assert len(DEFAULT_SOURCES) == 40
     assert len(feeds) == len(set(feeds))
+    assert len(domains) == len(set(domains))
     assert all(feed.startswith("https://") for feed in feeds)
 
 
